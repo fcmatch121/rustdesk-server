@@ -71,9 +71,9 @@ const PUNCH_REQ_DEDUPE_SEC: u64 = 60;
 static PUNCH_REQ_MAX: Lazy<usize> =
     Lazy::new(|| get_arg("MAX_PUNCH_REQUESTS").parse().unwrap_or(100_000));
 
-async fn record_punch_req(from_ip: String, to_ip: String, to_id: String) {
+async fn record_punch_req(from_ip: String, to_ip: String, to_id: String) -> bool {
     let max = *PUNCH_REQ_MAX;
-    if max == 0 { return; }
+    if max == 0 { return false; }
     let mut lock = PUNCH_REQS.lock().await;
     let mut dup = false;
     for e in lock.iter().rev().take(30) { // only check recent tail subset for speed
@@ -85,6 +85,35 @@ async fn record_punch_req(from_ip: String, to_ip: String, to_id: String) {
     if !dup {
         if lock.len() >= max { lock.pop_front(); }
         lock.push_back(PunchReqEntry { tm: Instant::now(), from_ip, to_ip, to_id });
+    }
+    !dup
+}
+
+// Modified: console v2 — record a connection attempt in the console event log.
+// Only logged when the punch-request dedupe accepts it, so repeated client
+// retries within the dedupe window do not spam the database (each event write
+// also prunes the log to 5000 rows).
+// status: "ok" (rendezvous answered), "offline" (target not registered),
+// "blocked" (target disabled by the console).
+async fn record_connect_event(
+    db: &crate::database::Database,
+    from_ip: String,
+    to_ip: String,
+    to_id: String,
+    ok: bool,
+    status: &str,
+    fresh: bool,
+) {
+    if !fresh {
+        return;
+    }
+    let detail = if ok {
+        format!("{} -> {}", from_ip, to_ip)
+    } else {
+        format!("{} -> {} ({})", from_ip, to_ip, status)
+    };
+    if let Err(e) = db.console_add_event("connect", &to_id, &detail).await {
+        log::warn!("failed to log connect event for {}: {}", to_id, e);
     }
 }
 
@@ -761,6 +790,23 @@ impl RendezvousServer {
             // Modified: console v2 — refuse connections to peers blocked by the console
             if disabled {
                 log::warn!("punch hole request for peer {} refused (disabled by console)", id);
+                // Modified: console v2 — log the refused connection attempt
+                let fresh = record_punch_req(
+                    try_into_v4(addr).ip().to_string(),
+                    try_into_v4(peer_addr).ip().to_string(),
+                    id.clone(),
+                )
+                .await;
+                record_connect_event(
+                    &self.pm.db,
+                    try_into_v4(addr).ip().to_string(),
+                    try_into_v4(peer_addr).ip().to_string(),
+                    id.clone(),
+                    false,
+                    "blocked",
+                    fresh,
+                )
+                .await;
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
                     failure: punch_hole_response::Failure::OFFLINE.into(),
@@ -768,6 +814,25 @@ impl RendezvousServer {
                 });
                 return Ok((msg_out, None));
             }
+            // Modified: console v2 — record the attempt before the stale/offline
+            // early return, so the FIRST attempt is logged (not just a retry)
+            let fresh = record_punch_req(
+                try_into_v4(addr).ip().to_string(),
+                try_into_v4(peer_addr).ip().to_string(),
+                id.clone(),
+            )
+            .await;
+            let offline = elapsed >= REG_TIMEOUT;
+            record_connect_event(
+                &self.pm.db,
+                try_into_v4(addr).ip().to_string(),
+                try_into_v4(peer_addr).ip().to_string(),
+                id.clone(),
+                !offline,
+                if offline { "offline" } else { "ok" },
+                fresh,
+            )
+            .await;
             if elapsed >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -777,14 +842,6 @@ impl RendezvousServer {
                 return Ok((msg_out, None));
             }
             
-            // record punch hole request (from addr -> peer id/peer_addr)
-            record_punch_req(
-                try_into_v4(addr).ip().to_string(),
-                try_into_v4(peer_addr).ip().to_string(),
-                id.clone(),
-            )
-            .await;
-
             let mut msg_out = RendezvousMessage::new();
             let peer_is_lan = self.is_lan(peer_addr);
             let is_lan = self.is_lan(addr);
