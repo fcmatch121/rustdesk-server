@@ -415,4 +415,32 @@ impl Database {
             .await?;
         Ok(row.get::<i64, _>("n"))
     }
+
+    // ---------- console v2: peer management actions ----------
+
+    /// Modified: console v2 — remove a peer row (and its manual location) entirely.
+    pub async fn console_delete_peer(&self, id: &str) -> ResultType<()> {
+        sqlx::query("delete from peer where id = ?")
+            .bind(id)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        sqlx::query("delete from console_peer_location where id = ?")
+            .bind(id)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
+
+    /// Modified: console v2 — disable / re-enable a device. status=0 means the
+    /// console blocked this peer: hbbs refuses punch-hole and relay requests
+    /// for it, so no connection can be established.
+    pub async fn console_set_peer_disabled(&self, id: &str, disabled: bool) -> ResultType<()> {
+        let status: Option<i64> = if disabled { Some(0) } else { None };
+        sqlx::query("update peer set status = ? where id = ?")
+            .bind(status)
+            .bind(id)
+            .execute(self.pool.get().await?.deref_mut())
+            .await?;
+        Ok(())
+    }
 }

@@ -40,7 +40,8 @@ pub(crate) struct Peer {
     pub(crate) pk: Bytes,
     // pub(crate) user: Option<Vec<u8>>,
     pub(crate) info: PeerInfo,
-    // pub(crate) disabled: bool,
+    // Modified: console v2 — disabled peers are refused punch-hole / relay requests
+    pub(crate) disabled: bool,
     pub(crate) reg_pk: (u32, Instant), // how often register_pk
 }
 
@@ -54,7 +55,7 @@ impl Default for Peer {
             pk: Bytes::new(),
             info: Default::default(),
             // user: None,
-            // disabled: false,
+            disabled: false,
             reg_pk: (0, get_expired_time()),
         }
     }
@@ -161,7 +162,8 @@ impl PeerMap {
                 pk: v.pk.into(),
                 // user: v.user,
                 info: serde_json::from_str::<PeerInfo>(&v.info).unwrap_or_default(),
-                // disabled: v.status == Some(0),
+                // Modified: console v2 — status=0 means disabled by the console
+                disabled: v.status == Some(0),
                 ..Default::default()
             };
             let peer = Arc::new(RwLock::new(peer));
@@ -193,6 +195,12 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+
+    // Modified: console v2 — drop a peer from the in-memory map (delete / disable)
+    #[inline]
+    pub(crate) async fn remove(&self, id: &str) {
+        self.map.write().await.remove(id);
     }
 
     // Modified: snapshot for the web console — (id, ms since last registration)

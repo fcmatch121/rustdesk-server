@@ -545,7 +545,12 @@ impl RendezvousServer {
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
                     }
-                    if let Some(peer) = self.pm.get_in_memory(&rf.id).await {
+                    // Modified: console v2 — refuse relay for peers blocked by the console
+                    if let Some(peer) = self.pm.get(&rf.id).await {
+                        if peer.read().await.disabled {
+                            log::warn!("relay request for peer {} refused (disabled by console)", rf.id);
+                            return true;
+                        }
                         let mut msg_out = RendezvousMessage::new();
                         rf.socket_addr = AddrMangle::encode(addr).into();
                         msg_out.set_request_relay(rf);
@@ -745,10 +750,24 @@ impl RendezvousServer {
         // because punch hole won't work if in the same intranet,
         // all routers will drop such self-connections.
         if let Some(peer) = self.pm.get(&id).await {
-            let (elapsed, peer_addr) = {
+            let (elapsed, peer_addr, disabled) = {
                 let r = peer.read().await;
-                (r.last_reg_time.elapsed().as_millis() as i64, r.socket_addr)
+                (
+                    r.last_reg_time.elapsed().as_millis() as i64,
+                    r.socket_addr,
+                    r.disabled,
+                )
             };
+            // Modified: console v2 — refuse connections to peers blocked by the console
+            if disabled {
+                log::warn!("punch hole request for peer {} refused (disabled by console)", id);
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_punch_hole_response(PunchHoleResponse {
+                    failure: punch_hole_response::Failure::OFFLINE.into(),
+                    ..Default::default()
+                });
+                return Ok((msg_out, None));
+            }
             if elapsed >= REG_TIMEOUT {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {

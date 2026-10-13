@@ -91,7 +91,8 @@ async fn run_console(pm: PeerMap, db: Database, port: i32) -> ResultType<()> {
     let app = Router::new()
         .route("/api/login", post(api_login))
         .route("/api/peers", get(api_peers))
-        .route("/api/peers/:id", get(api_peer_detail))
+        .route("/api/peers/:id", get(api_peer_detail).delete(api_delete_peer))
+        .route("/api/peers/:id/disable", post(api_disable_peer))
         .route("/api/peers/:id/location", post(api_set_location))
         .route("/api/map", get(api_map))
         .route("/api/stats", get(api_stats))
@@ -296,6 +297,7 @@ fn peer_json(
         "pk": base64_short(&p.pk),
         "online": elapsed.map(is_online).unwrap_or(false),
         "last_seen": elapsed.map(|e| if is_online(e) { 0 } else { -1 }).unwrap_or(-1),
+        "disabled": p.status == Some(0),
         "location": location,
     })
 }
@@ -484,6 +486,77 @@ async fn geo_lookup(state: &AppState, ip: &str) {
             }
         }
     }
+}
+
+// ---------- console v2: peer management actions ----------
+
+async fn api_delete_peer(
+    Extension(state): Extension<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    check_auth(&state, &headers)?;
+    let exists = state.db.get_peer(&id).await.map_err(internal_error)?;
+    if exists.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "peer not found"})),
+        ));
+    }
+    // drop from the in-memory map first so no in-flight request can use it
+    state.pm.remove(&id).await;
+    state
+        .db
+        .console_delete_peer(&id)
+        .await
+        .map_err(internal_error)?;
+    state
+        .db
+        .console_add_event("delete", &id, "removed via console")
+        .await
+        .ok();
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn api_disable_peer(
+    Extension(state): Extension<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    check_auth(&state, &headers)?;
+    let exists = state.db.get_peer(&id).await.map_err(internal_error)?;
+    if exists.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "peer not found"})),
+        ));
+    }
+    let disabled = body
+        .get("disabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    state
+        .db
+        .console_set_peer_disabled(&id, disabled)
+        .await
+        .map_err(internal_error)?;
+    // evict the cached entry so the next lookup reloads status from the db
+    state.pm.remove(&id).await;
+    state
+        .db
+        .console_add_event(
+            if disabled { "disable" } else { "enable" },
+            &id,
+            if disabled {
+                "blocked via console"
+            } else {
+                "unblocked via console"
+            },
+        )
+        .await
+        .ok();
+    Ok(Json(json!({"ok": true, "disabled": disabled})))
 }
 
 async fn api_stats(
