@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RustDesk Console</title>
+<style>
+:root{
+  --bg:#0b0e14; --bg2:#111622; --card:#151b28; --card2:#1a2233;
+  --line:#232c40; --tx:#e8edf6; --tx2:#8b96ab; --acc:#4f8cff; --acc2:#3a6fd8;
+  --ok:#37d67a; --warn:#ffb648; --err:#ff5c5c; --r:12px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font:14px/1.5 -apple-system,"Segoe UI","Malgun Gothic",sans-serif;height:100vh;overflow:hidden}
+button{cursor:pointer;border:none;background:none;color:inherit;font:inherit}
+input{background:var(--bg2);border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:9px 12px;font:inherit;outline:none}
+input:focus{border-color:var(--acc)}
+#login{position:fixed;inset:0;background:radial-gradient(1200px 700px at 70% -10%,#16223c 0%,var(--bg) 60%);display:flex;align-items:center;justify-content:center;z-index:99}
+#login .box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:36px;width:360px;text-align:center}
+#login h1{font-size:20px;margin-bottom:4px}#login p{color:var(--tx2);font-size:12px;margin-bottom:22px}
+#login input{width:100%;text-align:center}
+#login button{width:100%;margin-top:12px;padding:10px;background:var(--acc);border-radius:8px;font-weight:600}
+#login button:hover{background:var(--acc2)}
+#login .err{color:var(--err);font-size:12px;min-height:16px;margin-top:8px}
+#app{display:none;height:100vh}
+#app.on{display:flex}
+nav{width:210px;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 10px}
+nav .logo{font-weight:700;font-size:15px;padding:6px 12px 20px;letter-spacing:.2px}
+nav .logo span{color:var(--acc)}
+nav button{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:var(--tx2);text-align:left}
+nav button.on,nav button:hover{background:var(--card2);color:var(--tx)}
+nav .sp{flex:1}
+nav .who{padding:10px 12px;color:var(--tx2);font-size:12px;border-top:1px solid var(--line)}
+main{flex:1;overflow:auto;padding:22px 26px}
+h2{font-size:17px;margin-bottom:16px}
+.tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;min-width:130px}
+.tile b{display:block;font-size:24px;font-weight:700}
+.tile i{font-style:normal;color:var(--tx2);font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+table{width:100%;border-collapse:collapse}
+th{color:var(--tx2);font-size:12px;font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid #1b2334}
+tr:hover td{background:#181f2f}
+.badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.badge.on{background:#123527;color:var(--ok)}
+.badge.off{background:#3a1e22;color:var(--err)}
+input.search{width:260px;margin-bottom:12px}
+.kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1b2334}
+.kv span{color:var(--tx2)}.kv b{font-weight:600;user-select:all}
+.mut{color:var(--tx2)}
+#mapwrap{position:relative;height:calc(100vh - 130px);border-radius:var(--r);overflow:hidden;border:1px solid var(--line);background:radial-gradient(1000px 600px at 50% 40%,#0d1320 0%,#070a10 100%)}
+#globe{width:100%;height:100%;display:block;cursor:grab}
+#maptip{position:absolute;bottom:14px;left:14px;background:#121a2add;backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:none;max-width:340px}
+#legend{position:absolute;top:12px;right:12px;background:#121a2abb;border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12px;display:flex;gap:14px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+#unknownBox{margin-top:12px;display:none}
+.row-actions{display:flex;gap:6px}
+.row-actions input{padding:4px 8px;font-size:12px;width:90px}
+.row-actions button{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--tx2)}
+.row-actions button:hover{color:var(--tx);border-color:var(--acc)}
+.ev-kind{font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--card2)}
+.copy{font-size:11px;color:var(--acc);cursor:pointer;margin-left:8px}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="box">
+    <h1>🛰️ RustDesk Console</h1>
+    <p>self-hosted management console</p>
+    <input id="pw" type="password" placeholder="관리자 비밀번호" onkeydown="if(event.key==='Enter')login()">
+    <button onclick="login()">로그인</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<div id="app">
+<nav>
+  <div class="logo">🛰️ RustDesk <span>Console</span></div>
+  <button data-v="map" class="on">🌍 세계지도</button>
+  <button data-v="devices">💻 기기 관리</button>
+  <button data-v="events">📋 접속 기록</button>
+  <button data-v="server">🖥️ 서버 상태</button>
+  <button data-v="settings">⚙️ 설정 · 키</button>
+  <div class="sp"></div>
+  <div class="who" id="serverAddr"></div>
+</nav>
+<main>
+  <div id="v-map" class="view">
+    <h2>세계지도</h2>
+    <div class="tiles" id="mapTiles"></div>
+    <div id="mapwrap">
+      <canvas id="globe"></canvas>
+      <div id="legend"><span><i class="dot" style="background:var(--ok)"></i>온라인</span><span><i class="dot" style="background:var(--err)"></i>오프라인</span></div>
+      <div id="maptip"></div>
+    </div>
+    <div class="card" id="unknownBox"><b class="mut">위치 미지정 기기</b><div id="unknownList" style="margin-top:8px"></div></div>
+  </div>
+  <div id="v-devices" class="view" style="display:none">
+    <h2>기기 관리</h2>
+    <input class="search" id="devSearch" placeholder="ID · IP 검색…" oninput="renderDevices()">
+    <div class="card"><table id="devTable"></table></div>
+  </div>
+  <div id="v-events" class="view" style="display:none">
+    <h2>접속 기록</h2>
+    <div class="card"><table id="evTable"></table></div>
+  </div>
+  <div id="v-server" class="view" style="display:none">
+    <h2>서버 상태</h2>
+    <div class="tiles" id="srvTiles"></div>
+    <div class="card" id="srvInfo"></div>
+  </div>
+  <div id="v-settings" class="view" style="display:none">
+    <h2>설정 · 키</h2>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div class="card" style="flex:1;min-width:300px" id="keyCard"></div>
+      <div class="card" style="flex:1;min-width:300px">
+        <b>비밀번호 변경</b>
+        <div style="margin-top:12px;display:grid;gap:8px">
+          <input id="oldPw" type="password" placeholder="현재 비밀번호">
+          <input id="newPw" type="password" placeholder="새 비밀번호 (8자 이상)">
+          <button onclick="changePw()" style="padding:9px;background:var(--acc);border-radius:8px;font-weight:600">변경</button>
+          <span class="mut" id="pwMsg"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+
+<script>
+let TOKEN = localStorage.getItem('rd_token') || '';
+let STATS = null, MAP = null, PEERS = [], CLUSTERS = {};
+const API = {
+  get: (p) => fetch(p, {headers:{Authorization:'Bearer '+TOKEN}}).then(r=>r.status===401?(logout(),Promise.reject(401)):r.json()),
+  post: (p,b) => fetch(p,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+TOKEN},body:JSON.stringify(b)}).then(r=>r.status===401?(logout(),Promise.reject(401)):r.json()),
+};
+
+async function login(){
+  const r = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
+  const j = await r.json();
+  if(j.token){TOKEN=j.token;localStorage.setItem('rd_token',TOKEN);start();}
+  else document.getElementById('loginErr').textContent = j.error||'로그인 실패';
+}
+function logout(){localStorage.removeItem('rd_token');TOKEN='';location.reload();}
+
+let TIMER=null, curView='map';
+function start(){
+  document.getElementById('login').style.display='none';
+  document.getElementById('app').classList.add('on');
+  document.getElementById('serverAddr').textContent = location.host;
+  nav('map');
+  if(TIMER)clearInterval(TIMER);
+  TIMER = setInterval(refresh, 30000);
+  refresh();
+}
+async function refresh(){
+  try{
+    const [ps, st] = await Promise.all([API.get('/api/peers'), API.get('/api/stats')]);
+    PEERS = ps.peers||[]; STATS = st;
+    if(curView==='map')renderMap();
+    else if(curView==='devices')renderDevices();
+    else if(curView==='events')renderEvents();
+    else if(curView==='server')renderServer();
+  }catch(e){}
+}
+function nav(v){
+  curView=v;
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  document.querySelectorAll('.view').forEach(e=>e.style.display='none');
+  document.getElementById('v-'+v).style.display='block';
+  if(v==='map')initGlobe();
+  if(v==='settings')renderKey();
+  refresh();
+}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.v));
+
+function tile(v,l){return `<div class="tile"><b>${v??'-'}</b><i>${l}</i></div>`}
+
+/* ----- map ----- */
+let globeInit=false;
+async function renderMap(){
+  MAP = await API.get('/api/map');
+  const pts = MAP.points||[];
+  const online = pts.filter(p=>p.online).length;
+  const countries = new Set(pts.map(p=>p.country).filter(Boolean)).size;
+  document.getElementById('mapTiles').innerHTML = tile(STATS?STATS.total:'','전체 기기')+tile(online,'온라인')+tile(countries,'국가 수')+tile(MAP.unknown||0,'위치 미지정');
+  CLUSTERS = {};
+  pts.forEach(p=>{const k=(p.city||p.country||'unknown');(CLUSTERS[k]=CLUSTERS[k]||[]).push(p);});
+  const uk = document.getElementById('unknownBox');
+  const unknownPeers = PEERS.filter(p=>!p.location||!p.location.lat);
+  if(MAP.unknown>0){uk.style.display='block';document.getElementById('unknownList').innerHTML = unknownPeers.map(p=>`<span class="ev-kind" style="margin:2px">${p.id}</span>`).join(' ');}else uk.style.display='none';
+  if(globeInit)drawGlobe();
+}
+function initGlobe(){ if(!globeInit){globeInit=true;setupGlobe();} drawGlobe(); }
+
+/* globe renderer (vanilla canvas, orthographic projection) */
+const G={rot:{lat:22,lon:30},vel:0.06,drag:null};
+const LAND_BOXES=[[60,170,10,55],[70,180,20,65],[55,140,-10,50],[-60,-35,15,-58],[35,-10,70,-15],[-50,180,25,-35],[75,-170,-65,-140],[10,45,60,80],[0,45,35,60],[-45,175,-10,32]];
+let LAND=null;
+function landDots(){
+  if(LAND)return LAND;
+  const dots=[];let seed=7;
+  const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+  for(const [lat0,lon0,la1,lo1] of LAND_BOXES){
+    for(let i=0;i<90;i++){
+      dots.push([la1+rnd()*(lat0-la1), lo1+rnd()*(lon0-lo1)]);
+    }
+  }
+  LAND=dots;return dots;
+}
+function setupGlobe(){
+  const c=document.getElementById('globe');
+  new ResizeObserver(()=>{const r=c.getBoundingClientRect();const dpr=window.devicePixelRatio||1;c.width=Math.max(1,r.width*dpr);c.height=Math.max(1,r.height*dpr);}).observe(c);
+  c.addEventListener('pointerdown',e=>{G.drag={x:e.clientX,y:e.clientY};c.style.cursor='grabbing'});
+  window.addEventListener('pointermove',e=>{
+    if(G.drag){G.rot.lon+=(e.clientX-G.drag.x)*.25;G.rot.lat=Math.max(-85,Math.min(85,G.rot.lat+(e.clientY-G.drag.y)*.25));G.drag={x:e.clientX,y:e.clientY};}
+  });
+  window.addEventListener('pointerup',()=>{G.drag=null;document.getElementById('globe').style.cursor='grab'});
+  c.onclick=e=>clickPin(e);
+  requestAnimationFrame(loopGlobe);
+}
+function loopGlobe(){
+  const v=document.getElementById('v-map');
+  if(v && v.style.display!=='none'){
+    if(!G.drag)G.rot.lon+=G.vel;
+    drawGlobe();
+  }
+  requestAnimationFrame(loopGlobe);
+}
+function proj(la,lo,w,h,R){
+  const rl=G.rot.lat*Math.PI/180, ro=G.rot.lon*Math.PI/180;
+  const p=la*Math.PI/180, l=lo*Math.PI/180+ro;
+  const x0=Math.cos(p)*Math.sin(l), y0=Math.sin(p), z0=Math.cos(p)*Math.cos(l);
+  const y1=y0*Math.cos(rl)-z0*Math.sin(rl), z1=y0*Math.sin(rl)+z0*Math.cos(rl);
+  return {x:w/2+R*x0, y:h/2-R*y1, z:z1};
+}
+function drawGlobe(){
+  const c=document.getElementById('globe'); if(!c.width)return;
+  const ctx=c.getContext('2d'); const w=c.width,h=c.height,dpr=window.devicePixelRatio||1;
+  const cx=w/2, cy=h/2, R=Math.min(w,h)*.36;
+  ctx.clearRect(0,0,w,h);
+  let seed=42;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+  ctx.fillStyle='#cfd8ea';
+  for(let i=0;i<220;i++){const x=rnd()*w,y=rnd()*h,s=rnd();ctx.globalAlpha=.15+s*.5;ctx.fillRect(x,y,dpr*1.2,dpr*1.2);}
+  ctx.globalAlpha=1;
+  const g=ctx.createRadialGradient(cx,cy,R*.9,cx,cy,R*1.25);
+  g.addColorStop(0,'rgba(80,140,255,.35)');g.addColorStop(1,'rgba(80,140,255,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,R*1.25,0,7);ctx.fill();
+  const bg=ctx.createRadialGradient(cx-R*.4,cy-R*.4,R*.1,cx,cy,R);
+  bg.addColorStop(0,'#22314f');bg.addColorStop(.7,'#131d31');bg.addColorStop(1,'#0a101d');
+  ctx.fillStyle=bg;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();
+  ctx.fillStyle='#7fa8e8';
+  for(const [la,lo] of landDots()){
+    const p=proj(la,lo,w,h,R);
+    if(p.z<=0)continue;
+    ctx.globalAlpha=.5*p.z;
+    const s=dpr*(1+p.z);
+    ctx.fillRect(p.x-s/2,p.y-s/2,s,s);
+  }
+  ctx.globalAlpha=1;
+  if(!MAP)return;
+  const pts=MAP.points||[];
+  for(const list of Object.values(CLUSTERS)){
+    if(!list.length)continue;
+    const la=+list[0].lat, lo=+list[0].lon;
+    const p=proj(la,lo,w,h,R);
+    if(p.z<=0.02)continue;
+    const online=list.filter(x=>x.online).length;
+    const col=online>0?'#37d67a':'#ff5c5c';
+    const rg=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,10*dpr);
+    rg.addColorStop(0,col);rg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.globalAlpha=.6*p.z;ctx.fillStyle=rg;ctx.beginPath();ctx.arc(p.x,p.y,10*dpr,0,7);ctx.fill();ctx.globalAlpha=1;
+    ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,3.2*dpr,0,7);ctx.fill();
+    ctx.fillStyle='#e8edf6';ctx.globalAlpha=Math.min(1,p.z*1.4);
+    ctx.font=`${11*dpr}px sans-serif`;
+    ctx.fillText(`${list[0].city||city0(list)} · ${list[0].country||''} ×${list.length}`,p.x+8*dpr,p.y+4*dpr);
+    ctx.globalAlpha=1;
+    list._px={x:p.x/dpr,y:p.y/dpr};
+  }
+}
+function city0(list){return 'unknown'}
+function clickPin(e){
+  const c=document.getElementById('globe');
+  const r=c.getBoundingClientRect();
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  for(const list of Object.values(CLUSTERS)){
+    const p=list._px;if(!p)continue;
+    if(Math.hypot(p.x-x,p.y-y)<12){
+      const tip=document.getElementById('maptip');
+      tip.innerHTML=`<h4>${list[0].city||''} · ${list[0].country||''} ×${list.length}</h4>`+list.map(d=>`${d.online?'🟢':'🔴'} ${d.id} <span class="mut">${d.ip||''}</span>`).join('<br>');
+      tip.style.display='block';
+      return;
+    }
+  }
+  document.getElementById('maptip').style.display='none';
+}
+
+/* ----- devices ----- */
+function renderDevices(){
+  const q=(document.getElementById('devSearch').value||'').toLowerCase();
+  const rows=PEERS.filter(p=>!q||p.id.toLowerCase().includes(q)||(p.ip||'').includes(q));
+  document.getElementById('devTable').innerHTML=
+   `<tr><th>상태</th><th>ID</th><th>IP</th><th>위치</th><th>수동 위치</th></tr>`+
+   rows.map(p=>`<tr>
+     <td><span class="badge ${p.online?'on':'off'}">${p.online?'온라인':'오프라인'}</span></td>
+     <td><b>${p.id}</b></td>
+     <td>${p.ip||'-'}</td>
+     <td>${p.location&&p.location.lat?`${p.location.city||''} ${p.location.country||''}`:'<span class="mut">미지정</span>'}</td>
+     <td class="row-actions"><input placeholder="lat,lon" id="ll-${p.id}"><button onclick="setLoc('${p.id}')">지정</button><button onclick="clearLoc('${p.id}')">해제</button></td>
+   </tr>`).join('') || '<tr><td colspan="5" class="mut">기기가 없습니다 — 에이전트를 실행하면 자동 등록됩니다</td></tr>';
+}
+async function setLoc(id){
+  const v=document.getElementById('ll-'+id).value.split(',').map(s=>parseFloat(s.trim()));
+  if(v.length!==2||isNaN(v[0]))return alert('lat,lon 형식으로 입력하세요 (예: 37.5,127.0)');
+  await API.post(`/api/peers/${encodeURIComponent(id)}/location`,{country:'',city:'',lat:v[0],lon:v[1]});
+  refresh();
+}
+async function clearLoc(id){
+  await API.post(`/api/peers/${encodeURIComponent(id)}/location`,{clear:true});
+  refresh();
+}
+
+/* ----- events ----- */
+async function renderEvents(){
+  const ev=(await API.get('/api/events')).events||[];
+  document.getElementById('evTable').innerHTML=
+   `<tr><th>시각</th><th>구분</th><th>기기</th><th>내용</th></tr>`+
+   ev.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleString()}</td><td><span class="ev-kind">${e.kind}</span></td><td>${e.peer_id}</td><td class="mut">${e.detail}</td></tr>`).join('')
+   || '<tr><td colspan="4" class="mut">기록 없음</td></tr>';
+}
+
+/* ----- server ----- */
+async function renderServer(){
+  const s=await API.get('/api/server');
+  const t=STATS||{};
+  const up=s.uptime?Math.floor(s.uptime/3600)+'h '+Math.floor(s.uptime%3600/60)+'m':'-';
+  document.getElementById('srvTiles').innerHTML=tile(t.total,'기기')+tile(t.online,'온라인')+tile(up,'가동시간');
+  document.getElementById('srvInfo').innerHTML=`
+    <div class="kv"><span>버전</span><b>${t.version||'-'}</b></div>
+    <div class="kv"><span>ID/등록 서버 (UDP/TCP)</span><b>${s.rendezvous_port}</b></div>
+    <div class="kv"><span>Direct TCP (포트-1)</span><b>${s.nat_port}</b></div>
+    <div class="kv"><span>중계 서버 (포트+1)</span><b>${s.relay_port}</b></div>
+    <div class="kv"><span>WebSocket</span><b>${s.ws_port}</b></div>
+    <div class="kv"><span>웹 콘솔</span><b>${s.console_port}</b></div>
+    <div class="kv"><span>서버 공개키</span><b style="font-size:12px">${s.public_key||'-'}<span class="copy" onclick="navigator.clipboard.writeText('${s.public_key||''}')">복사</span></b></div>`;
+}
+
+/* ----- settings ----- */
+async function renderKey(){
+  const s=await API.get('/api/server');
+  document.getElementById('keyCard').innerHTML=`
+    <b>에이전트 설정값</b>
+    <div style="margin-top:12px">
+      <div class="kv"><span>ID 서버</span><b>${location.hostname||'서버IP'}<span class="copy" onclick="navigator.clipboard.writeText('${location.hostname}')">복사</span></b></div>
+      <div class="kv"><span>공개키 (RS_PUB_KEY)</span><b style="font-size:12px">${s.public_key||'-'}<span class="copy" onclick="navigator.clipboard.writeText('${s.public_key||''}')">복사</span></b></div>
+    </div>
+    <p class="mut" style="margin-top:12px;font-size:12px">에이전트 설정 → ID/Relay 서버에 위 값을 넣거나, 커스텀 빌드(주소·키 내장)를 배포하세요. 커스텀 빌드는 GitHub Actions의 custom-server / custom-pub-key 입력으로 수행됩니다.</p>`;
+}
+async function changePw(){
+  const r=await API.post('/api/password',{old:document.getElementById('oldPw').value,new:document.getElementById('newPw').value});
+  document.getElementById('pwMsg').textContent = r.ok?'변경 완료':(r.error||'실패');
+}
+
+/* boot */
+if(TOKEN){
+  fetch('/api/stats',{headers:{Authorization:'Bearer '+TOKEN}}).then(r=>{r.ok?start():logout()}).catch(()=>{});
+}
+</script>
+</body>
+</html>

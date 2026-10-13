@@ -103,13 +103,15 @@ impl PeerMap {
         ip: String,
     ) -> register_pk_response::Result {
         log::info!("update_pk {} {:?} {:?} {:?}", id, addr, uuid, pk);
+        // Modified: remember the previous ip so the console can log ip changes
+        let prev_ip = peer.read().await.info.ip.clone();
         let (info_str, guid) = {
             let mut w = peer.write().await;
             w.socket_addr = addr;
             w.uuid = uuid.clone();
             w.pk = pk.clone();
             w.last_reg_time = Instant::now();
-            w.info.ip = ip;
+            w.info.ip = ip.clone();
             (
                 serde_json::to_string(&w.info).unwrap_or_default(),
                 w.guid.clone(),
@@ -125,12 +127,24 @@ impl PeerMap {
                     peer.write().await.guid = guid;
                 }
             }
+            // Modified: console event — new registration
+            let _ = self
+                .db
+                .console_add_event("register", &id, &ip)
+                .await;
         } else {
             if let Err(err) = self.db.update_pk(&guid, &id, &pk, &info_str).await {
                 log::error!("db.update_pk failed: {}", err);
                 return register_pk_response::Result::SERVER_ERROR;
             }
             log::info!("pk updated instead of insert");
+            // Modified: console event — ip / pk changes
+            if !prev_ip.is_empty() && prev_ip != ip {
+                let _ = self
+                    .db
+                    .console_add_event("ip_change", &id, &format!("{} -> {}", prev_ip, ip))
+                    .await;
+            }
         }
         register_pk_response::Result::OK
     }
@@ -179,5 +193,17 @@ impl PeerMap {
     #[inline]
     pub(crate) async fn is_in_memory(&self, id: &str) -> bool {
         self.map.read().await.contains_key(id)
+    }
+
+    // Modified: snapshot for the web console — (id, ms since last registration)
+    #[inline]
+    pub(crate) async fn list_elapsed(&self) -> Vec<(String, i64)> {
+        let map = self.map.read().await;
+        map.iter()
+            .map(|(id, p)| {
+                let elapsed = p.try_read().map_or(-1, |r| r.last_reg_time.elapsed().as_millis() as i64);
+                (id.clone(), elapsed)
+            })
+            .collect()
     }
 }
