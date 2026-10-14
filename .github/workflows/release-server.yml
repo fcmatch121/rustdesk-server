@@ -1,0 +1,39 @@
+name: Attach server release asset
+
+# Modified: repackage the windows binaries artifact as the distributable
+# server zip and attach it to the fleet release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach assets to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch binaries artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dl
+          gh api "repos/${{ github.repository }}/actions/artifacts/11862624571/zip" > dl/server.zip
+          python3 -c "import zipfile; zipfile.ZipFile('dl/server.zip').extractall('dl/server')"
+
+      - name: Package
+        run: |
+          python3 -c "import zipfile
+          with zipfile.ZipFile('hbbs-console-windows-x86_64.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+              for f in ['hbbs.exe', 'hbbr.exe', 'rustdesk-utils.exe', 'RustDeskServer.Setup.exe']:
+                  z.write('dl/server/' + f, f)"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ inputs.tag }}" hbbs-console-windows-x86_64.zip --repo "${{ github.repository }}" --clobber
